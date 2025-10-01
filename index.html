@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ค้นหาจาก Google Sheet</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#f7fbff;color:#0b2a4a;padding:24px}
+    .wrap{max-width:880px;margin:auto}
+    h1{margin:0 0 12px}
+    .card{background:#fff;border:1px solid #e6eef7;border-radius:14px;box-shadow:0 6px 16px rgba(11,42,74,.06);padding:16px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    input{flex:1;min-width:260px;padding:12px 14px;border:1px solid #b7d3f2;border-radius:10px;font-size:16px}
+    button{padding:12px 16px;border:0;border-radius:10px;background:#155EFB;color:#fff;font-weight:600;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .muted{color:#5c728a}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:10px;border-bottom:1px solid #eef4fb;text-align:left}
+    th{background:#f0f6ff}
+    .err{display:none;margin-top:12px;padding:12px;border:1px solid #ffccd1;background:#fff5f6;color:#a30012;border-radius:10px;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🔎 ค้นหาข้อมูล</h1>
+    <div class="card">
+      <div class="row">
+        <input id="q" placeholder="พิมพ์คำค้นหา (คอลัมน์ A หรือ B)"/>
+        <button id="btn">ค้นหา</button>
+        <span id="loading" class="muted" style="display:none">กำลังดึงข้อมูล…</span>
+      </div>
+      <div id="out" class="muted">พิมพ์คำแล้วกด “ค้นหา”</div>
+      <div id="err" class="err"></div>
+    </div>
+  </div>
+
+  <script>
+    // ======= ใส่ URL Web App ของคุณ ( /exec ) =======
+    const API = "https://script.google.com/macros/s/AKfycbyUq8ggod1TQOQ759zp6e36y5q9mXhz1Q2sA2GybqVk5ma42vHPwFvnXvqf8Aq8YACg/exec";
+
+    const $ = id => document.getElementById(id);
+    const q = $("q"), btn = $("btn"), out = $("out"), err = $("err"), loading = $("loading");
+
+    function showError(m){ err.style.display="block"; err.textContent=m; }
+    function clearError(){ err.style.display="none"; err.textContent=""; }
+    function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));}
+
+    function pickRows(data){
+      // รองรับหลายรูปแบบ: {rows:[...]}, {data:[...]}, {values:[...]}
+      const key = ["rows","data","values"].find(k => Array.isArray(data?.[k]));
+      return key ? data[key] : (Array.isArray(data) ? data : null);
+    }
+
+    function render(data){
+      const rows = pickRows(data);
+      if(!rows || rows.length===0){ out.innerHTML = "<span class='muted'>ไม่พบข้อมูล</span>"; return; }
+
+      let headers = [];
+      // ถ้าเป็น object ใช้คีย์เป็นหัวตาราง, ถ้าเป็น array ใช้ Col1, Col2,...
+      if (typeof rows[0] === "object" && !Array.isArray(rows[0])) {
+        headers = Object.keys(rows[0]);
+      } else {
+        const maxLen = rows.reduce((m,r)=>Math.max(m, r.length||0), 0);
+        headers = Array.from({length:maxLen}, (_,i)=>"Col"+(i+1));
+      }
+
+      const thead = "<tr>"+headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")+"</tr>";
+      const tbody = rows.map(r=>{
+        if (typeof r === "object" && !Array.isArray(r)) {
+          return "<tr>"+headers.map(h=>`<td>${escapeHtml(r[h]??"")}</td>`).join("")+"</tr>";
+        } else {
+          return "<tr>"+headers.map((_,i)=>`<td>${escapeHtml(r?.[i]??"")}</td>`).join("")+"</tr>";
+        }
+      }).join("");
+
+      out.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+    }
+
+    async function search(){
+      clearError();
+      const term = (q.value||"").trim();
+      if(!term){ out.innerHTML="<span class='muted'>กรุณาพิมพ์คำค้นหา</span>"; return; }
+      btn.disabled = true; loading.style.display="inline";
+      const url = API + "?q=" + encodeURIComponent(term);
+
+      try {
+        // 1) ลอง fetch JSON ปกติ
+        const res = await fetch(url, {method:"GET"});
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch { throw new Error("ผลลัพธ์ไม่ใช่ JSON (ลองใช้ JSONP แทน)"); }
+        render(data);
+      } catch (e) {
+        // 2) Fallback เป็น JSONP (กัน CORS/เปิดไฟล์ผ่าน file://)
+        try {
+          await jsonp(url, d=>render(d));
+        } catch (e2) {
+          showError("Failed to fetch และ JSONP ไม่สำเร็จ\n" + (e2.message || e.message || e));
+        }
+      } finally {
+        btn.disabled = false; loading.style.display="none";
+      }
+    }
+
+    function jsonp(baseUrl, onSuccess){
+      return new Promise((resolve,reject)=>{
+        const cbName = "cb_"+Date.now();
+        window[cbName] = (data)=>{ try{ onSuccess(data); resolve(); } finally { cleanup(); } };
+        const s = document.createElement("script");
+        s.src = baseUrl + (baseUrl.includes("?")?"&":"?") + "callback=" + cbName;
+        s.onerror = ()=>{ cleanup(); reject(new Error("JSONP script error")); };
+        document.body.appendChild(s);
+        function cleanup(){ delete window[cbName]; s.remove(); }
+      });
+    }
+
+    btn.addEventListener("click", search);
+    q.addEventListener("keydown", e => { if(e.key==="Enter") search(); });
+
+    // โชว์ error JS ถ้ามี จะไม่จอขาว
+    window.addEventListener("error", e=>showError("JS Error: "+e.message));
+    window.addEventListener("unhandledrejection", e=>showError("Promise Error: "+(e.reason?.message||e.reason)));
+  </script>
+</body>
+</html>
