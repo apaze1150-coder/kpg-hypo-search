@@ -1,33 +1,137 @@
 <!doctype html>
 <html lang="th">
+<head>
 <meta charset="utf-8">
-<title>HYPO ค้นหา</title>
-<input id="q" placeholder="พิมพ์คำค้นหา (A/B)" style="width:60%">
-<button onclick="go()">ค้นหา</button>
-<pre id="out">พร้อมค้นหา…</pre>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HYPO ค้นหาจาก Google Sheet (ทุกชีต)</title>
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#f7fbff;color:#0b2a4a;margin:0;padding:24px}
+  .wrap{max-width:1100px;margin:auto}
+  h1{margin:0 0 16px}
+  .card{background:#fff;border:1px solid #e6eef7;border-radius:16px;box-shadow:0 10px 24px rgba(11,42,74,.06);padding:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  input{flex:1;min-width:240px;padding:12px 14px;border:1px solid #b7d3f2;border-radius:12px;font-size:16px}
+  button{padding:12px 16px;border:0;border-radius:12px;background:#155EFB;color:#fff;font-weight:700;cursor:pointer}
+  .muted{color:#5c728a}
+  .err{display:none;margin-top:12px;padding:12px;border:1px solid #ffccd1;background:#fff5f6;color:#a30012;border-radius:10px;white-space:pre-wrap}
+  .sec{margin-top:18px}
+  .sheet-title{font-weight:700;margin:14px 0 6px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border:1px solid #e6eef7;padding:6px 8px;vertical-align:top}
+  thead th{background:#f0f6ff}
+  .headerTable{margin-bottom:4px}
+  .blockTable{margin-bottom:18px}
+  mark{background:#fff2a8;padding:0 2px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔎 ค้นหาข้อมูล</h1>
+  <div class="card">
+    <div class="row">
+      <input id="q" placeholder="พิมพ์คำค้นหา (ค้นคอลัมน์ A/B ทุกชีต เฉพาะแถว 17–21)">
+      <button id="btn">ค้นหา</button>
+    </div>
+    <div id="out" class="muted">พิมพ์คำแล้วกด “ค้นหา”</div>
+    <div id="err" class="err"></div>
+  </div>
+</div>
+
 <script>
-const API = "https://script.google.com/macros/s/AKfycbwMK7FxZUaihM0o2cdm1BbGP4c6BRL4ntJcesm15kIjaOulck7ut42z2uZY73a86ba9/exec";
+  // ======= ใส่ URL Web App (/exec) ของคุณ =======
+  const API = "https://script.google.com/macros/s/AKfycbzCduwRMquZslQMFyMpwkmRI14SDV7l37K0JZoDWcfoXVm_4hqvGjm2a_kqYwfGeVDn/exec; // เช่น https://script.google.com/macros/s/AKfy.../exec
 
-function go(){
-  const term = (document.getElementById('q').value||'').trim();
-  if(!term) return;
-  jsonp(API + "?q=" + encodeURIComponent(term), data => {
-    document.getElementById('out').textContent = JSON.stringify(data, null, 2);
-  }).catch(err=>{
-    document.getElementById('out').textContent = 'JSONP error: ' + err.message;
-  });
-}
+  const $ = id => document.getElementById(id);
+  const out = $("out"), err = $("err"), qEl = $("q"), btn = $("btn");
 
-function jsonp(url, onSuccess){
-  return new Promise((resolve,reject)=>{
-    const cb = "cb_"+Date.now();
-    window[cb] = d => { try{ onSuccess(d); resolve(); } finally { cleanup(); } };
-    const s = document.createElement("script");
-    s.src = url + (url.includes("?")?"&":"?") + "callback=" + cb;
-    s.onerror = () => { cleanup(); reject(new Error("script load failed")); }
-    document.body.appendChild(s);
-    function cleanup(){ delete window[cb]; s.remove(); }
-  });
-}
+  function showError(m){ err.style.display="block"; err.textContent=m; }
+  function clearError(){ err.style.display="none"; err.textContent=""; }
+
+  function esc(s){ return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+
+  function renderHeader(header){
+    // header เป็น 2D array (4 แถว x ถึงคอลัมน์ AC)
+    let html = '<table class="headerTable"><tbody>';
+    for (const row of header){
+      html += '<tr>' + row.map(v => `<td>${esc(v)}</td>`).join('') + '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function renderBlock(block, highlights, query){
+    // block เป็น 2D array (5 แถว x ถึงคอลัมน์ AC)
+    // highlights: [{r,c}] เฉพาะคอลัมน์ A/B
+    const H = new Set(highlights.map(h => `${h.r}:${h.c}`));
+    let html = '<table class="blockTable"><tbody>';
+    for (let r=0; r<block.length; r++){
+      html += '<tr>';
+      for (let c=0; c<block[r].length; c++){
+        let v = String(block[r][c] ?? '');
+        if (H.has(`${r}:${c}`) && query){
+          // ไฮไลท์เฉพาะ text ที่ตรงคำค้น (case-insensitive)
+          const re = new RegExp(escapeRegExp(query), 'ig');
+          v = v.replace(re, m => `<mark>${esc(m)}</mark>`);
+        } else {
+          v = esc(v);
+        }
+        html += `<td>${v}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function renderResults(data, query){
+    if (!data.ok){
+      out.innerHTML = '<span class="muted">API error</span>';
+      showError(data.error || 'Unknown error');
+      return;
+    }
+    if (!data.results || data.results.length === 0){
+      out.innerHTML = '<span class="muted">ไม่พบข้อมูลที่ตรงคำค้น</span>';
+      return;
+    }
+    let html = '';
+    for (const item of data.results){
+      html += `<div class="sec">
+        <div class="sheet-title">🗂️ ${esc(item.sheetName)} — Header ${esc(item.rangeInfo.header)}, Block ${esc(item.rangeInfo.block)}</div>
+        ${renderHeader(item.header)}
+        ${renderBlock(item.block, item.highlights || [], query)}
+      </div>`;
+    }
+    out.innerHTML = html;
+  }
+
+  function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  function jsonp(url, onSuccess){
+    return new Promise((resolve,reject)=>{
+      const cb = "cb_" + Date.now();
+      window[cb] = d => { try{ onSuccess(d); resolve(); } finally { cleanup(); } };
+      const s = document.createElement('script');
+      s.src = url + (url.includes('?')?'&':'?') + 'callback=' + cb;
+      s.onerror = () => { cleanup(); reject(new Error('JSONP script error')); };
+      document.body.appendChild(s);
+      function cleanup(){ delete window[cb]; s.remove(); }
+    });
+  }
+
+  async function search(){
+    clearError();
+    const term = (qEl.value || '').trim();
+    if (!term){ out.innerHTML = '<span class="muted">กรุณาพิมพ์คำค้นหา</span>'; return; }
+    out.innerHTML = '<span class="muted">กำลังค้นหา…</span>';
+    try {
+      await jsonp(API + '?q=' + encodeURIComponent(term), d => renderResults(d, term));
+    } catch (e) {
+      showError(e.message);
+    }
+  }
+
+  btn.addEventListener('click', search);
+  qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
 </script>
+</body>
 </html>
