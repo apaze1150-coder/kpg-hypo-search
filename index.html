@@ -1,91 +1,41 @@
 <!doctype html>
 <html lang="th">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>HYPO ค้นหาจาก Google Sheet (ทุกชีต)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HYPO – ทดสอบค้นหา</title>
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#f7fbff;color:#0b2a4a;margin:0;padding:24px}
-    .wrap{max-width:1100px;margin:auto}
-    h1{margin:0 0 16px}
-    .card{background:#fff;border:1px solid #e6eef7;border-radius:16px;box-shadow:0 10px 24px rgba(11,42,74,.06);padding:16px}
+    .wrap{max-width:920px;margin:auto}
+    .card{background:#fff;border:1px solid #e6eef7;border-radius:14px;box-shadow:0 8px 20px rgba(11,42,74,.06);padding:16px}
     .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-    input{flex:1;min-width:240px;padding:12px 14px;border:1px solid #b7d3f2;border-radius:12px;font-size:16px}
-    button{padding:12px 16px;border:0;border-radius:12px;background:#155EFB;color:#fff;font-weight:700;cursor:pointer}
+    input{flex:1;min-width:260px;padding:12px 14px;border:1px solid #b7d3f2;border-radius:10px;font-size:16px}
+    button{padding:12px 16px;border:0;border-radius:10px;background:#155EFB;color:#fff;font-weight:700;cursor:pointer}
+    pre{background:#0b2a4a0a;border:1px solid #e6eef7;border-radius:10px;padding:12px;white-space:pre-wrap}
+    .err{color:#a30012}
     .muted{color:#5c728a}
-    .err{display:none;margin-top:12px;padding:12px;border:1px solid #ffccd1;background:#fff5f6;color:#a30012;border-radius:10px;white-space:pre-wrap}
-    .sec{margin-top:18px}
-    .sheet-title{font-weight:700;margin:14px 0 6px}
-    table{width:100%;border-collapse:collapse;font-size:14px}
-    th,td{border:1px solid #e6eef7;padding:6px 8px;vertical-align:top}
-    thead th{background:#f0f6ff}
-    .headerTable{margin-bottom:4px}
-    .blockTable{margin-bottom:18px}
-    mark{background:#fff2a8;padding:0 2px;border-radius:3px}
-    a.debug{font-size:12px}
+    small a{font-size:12px}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>🔎 ค้นหาข้อมูล</h1>
-    <div class="card">
-      <div class="row">
-        <input id="q" placeholder="พิมพ์คำค้นหา (ค้นคอลัมน์ A/B ทุกชีต แถว 17–21)">
-        <button id="btn" onclick="search()">ค้นหา</button>
-      </div>
-      <div id="out" class="muted">พิมพ์คำแล้วกด “ค้นหา”</div>
-      <div id="err" class="err"></div>
+<div class="wrap">
+  <h1>🔎 ค้นหาข้อมูล (โหมดดีบัก)</h1>
+  <div class="card">
+    <div class="row">
+      <input id="q" placeholder="พิมพ์คำค้นหา (ค้น A/B แถว 17–21 ทุกชีต)">
+      <button id="btn" onclick="search()">ค้นหา</button>
     </div>
+    <div id="status" class="muted">พิมพ์คำแล้วกด “ค้นหา”</div>
+    <div><small id="link"></small></div>
+    <pre id="out"></pre>
   </div>
+</div>
 
-  <script defer>
-  // >>>>>>>>>>>> สำคัญ: ใส่ URL Web App ของคุณ (ลงท้าย /exec) <<<<<<<<<<<<
-  const API = https://script.google.com/macros/s/AKfycbw3RytsG-ugE6Dyof9yBSi7n2yLgycQa1cOoBLM85wbpn1kbeyJaZd4PujNLRQQmNNd/exec; // เช่น https://script.google.com/macros/s/AKfy.../exec
+<script>
+  // >>> ใส่ URL Web App ของคุณ (ลงท้าย /exec) <<<
+  const API = https://script.google.com/macros/s/AKfycbwjgLsN-gXRRDeJM1n708pG9lsG_6UJwKwy4-hYe-7VGd05FpCkGPCWA34mMgeiGDKG/exec;
 
-  const $ = id => document.getElementById(id);
-  const qEl = $("q"), out = $("out"), errBox = $("err"), btn = $("btn");
-
-  function showError(m){ errBox.style.display="block"; errBox.textContent=m; }
-  function clearError(){ errBox.style.display="none"; errBox.textContent=""; }
-  function esc(s){ return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-  function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
-
-  function renderHeader(header){
-    let html = '<table class="headerTable"><tbody>';
-    for(const row of header){ html += '<tr>'+row.map(v=>`<td>${esc(v)}</td>`).join('')+'</tr>'; }
-    html += '</tbody></table>'; return html;
-  }
-  function renderBlock(block, highlights, query){
-    const H = new Set((highlights||[]).map(h=>`${h.r}:${h.c}`));
-    let html = '<table class="blockTable"><tbody>';
-    for(let r=0;r<block.length;r++){
-      html += '<tr>';
-      for(let c=0;c<block[r].length;c++){
-        let v = String(block[r][c] ?? '');
-        if(H.has(`${r}:${c}`) && query){
-          const re = new RegExp(escapeRegExp(query),'ig');
-          v = v.replace(re, m=>`<mark>${esc(m)}</mark>`);
-        }else v = esc(v);
-        html += `<td>${v}</td>`;
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table>'; return html;
-  }
-  function renderResults(data, query){
-    if(!data.ok){ out.innerHTML='<span class="muted">API error</span>'; showError(data.error||'Unknown error'); return; }
-    if(!data.results || data.results.length===0){ out.innerHTML='<span class="muted">ไม่พบข้อมูลที่ตรงคำค้น</span>'; return; }
-    let html=''; 
-    for(const item of data.results){
-      html += `<div class="sec">
-        <div class="sheet-title">🗂️ ${esc(item.sheetName)} — Header ${esc(item.rangeInfo.header)}, Block ${esc(item.rangeInfo.block)}</div>
-        ${renderHeader(item.header)}
-        ${renderBlock(item.block, item.highlights||[], query)}
-      </div>`;
-    }
-    out.innerHTML = html;
-  }
-
+  // ===== helper =====
   function jsonp(url, onSuccess){
     return new Promise((resolve,reject)=>{
       const cb = "cb_"+Date.now();
@@ -97,30 +47,46 @@
       function cleanup(){ delete window[cb]; s.remove(); }
     });
   }
+  function esc(s){ return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
   async function search(){
-    clearError();
-    if(!API || !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(API)){
-      showError("ยังไม่ได้ตั้งค่า API (/exec) หรือรูปแบบ URL ไม่ถูกต้อง");
+    const input = document.getElementById('q');
+    const term  = (input ? input.value : "").trim();
+    const out   = document.getElementById('out');
+    const link  = document.getElementById('link');
+    const status= document.getElementById('status');
+
+    // ตรวจ API ถูกตั้งหรือยัง
+    if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(API)){
+      status.innerHTML = '<span class="err">ยังไม่ได้ตั้งค่า API (/exec) ที่ถูกต้อง</span>';
+      out.textContent = "";
+      link.innerHTML = "";
       return;
     }
-    const term = (qEl.value||"").trim();
-    if(!term){ out.innerHTML = '<span class="muted">กรุณาพิมพ์คำค้นหา</span>'; return; }
-    const url = API + "?q=" + encodeURIComponent(term);
-    out.innerHTML = 'กำลังค้นหา…<br><a class="debug" target="_blank" href="'+esc(url+'&callback=demo')+'">ทดสอบลิงก์ JSONP ('+esc(url+'&callback=demo')+')</a>';
 
-    btn.disabled = true;
+    // ตรวจว่ามีคำค้น
+    if(!term){
+      status.innerHTML = '<span class="err">ยังไม่ได้พิมพ์คำค้นหา → ระบบจะไม่ส่ง q</span>';
+      out.textContent = "";
+      link.innerHTML = "";
+      return;
+    }
+
+    // สร้าง URL และโชว์ให้คลิกตรวจเองได้
+    const url = API + "?q=" + encodeURIComponent(term);
+    status.textContent = "กำลังค้นหา…";
+    link.innerHTML = 'ตรวจปลายทาง: <a target="_blank" href="'+esc(url+'&callback=demo')+'">'+esc(url+'&callback=demo')+'</a>';
+
     try{
-      await jsonp(url, d => renderResults(d, term));
+      await jsonp(url, (data)=>{ out.textContent = JSON.stringify(data, null, 2); });
+      status.textContent = "สำเร็จ";
     }catch(e){
-      showError(e.message);
-    }finally{
-      btn.disabled = false;
+      status.innerHTML = '<span class="err">'+esc(e.message)+'</span>';
     }
   }
 
   // รองรับกด Enter
-  qEl.addEventListener("keydown", e => { if(e.key==="Enter") search(); });
-  </script>
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Enter') search(); });
+</script>
 </body>
 </html>
